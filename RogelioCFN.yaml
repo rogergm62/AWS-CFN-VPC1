@@ -1,0 +1,263 @@
+# VPC Creation.
+AWSTemplateFormatVersion: '2010-09-09' #This line is optional
+Description: My first VPC using CloudFormation # A description of my CloudFormation stack
+
+Resources:   
+  RogVPC:                 # Define a new resource named "RogVPC"
+    Type: AWS::EC2::VPC   # Specify the resource type (in this case, an Amazon VPC)
+    Properties: 
+      CidrBlock: 192.168.16.0/24    # The CIDR block range for the VPC
+      EnableDnsSupport: true        # Enable DNS resolution within the VPC
+      EnableDnsHostnames: true      # Enable DNS hostnames for instances launched in the VPC
+      Tags:                         # Tags help to name and identify your resources
+        - Key: Name                 # The tag key
+          Value: Rog-VPC            # The tag value (the name that will appear in the console)
+
+# Including IPv6:
+  IPv6Block:                       # Define a new resource named "IPv6Block"
+    Type: AWS::EC2::VPCCidrBlock   # Specify the resource type
+    Properties:
+      VpcId: !Ref RogVPC           # !Ref returns the logical ID of the resource (RogVPC)
+      AmazonProvidedIpv6CidrBlock: true
+
+# Subnet Creation
+#  SubnetReservedTierA:     # Remove the comments to define a new resource named "SubnetReservedTierA"
+#    Type: AWS::EC2::Subnet
+#    DependsOn: IPv6Block
+#    Properties:
+#      VpcId: !Ref RogVPC            # !Ref returns the logical ID of the resource (RogVPC)
+#      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+#      CidrBlock: 192.168.16.0/28
+#      AssignIpv6AddressOnCreation: true  # Enabling IPv6
+#      Ipv6CidrBlock: 
+#        Fn::Sub:
+#          - "${VpcPart}${SubnetPart}"
+#          - SubnetPart: '00::/64'
+#            VpcPart: !Select [ 0, !Split [ '00::/56', !Select [ 0, !GetAtt RogVPC.Ipv6CidrBlocks ]]]      
+#      Tags:
+#        - Key: Name
+#          Value: sn-reserved-A      # The name that will appear in the console
+
+#  SubnetDBA:               # Remove the comments to define a new subnet named Subnet DBA
+#    Type: AWS::EC2::Subnet
+#    DependsOn: IPv6Block
+#    Properties:
+#      VpcId: !Ref RogVPC
+#      AvailabilityZone: !Select [ 0, !GetAZs '']
+#      CidrBlock: 192.168.16.16/28
+#      AssignIpv6AddressOnCreation: true  # Enabling IPv6
+#      Ipv6CidrBlock: 
+#        Fn::Sub:
+#          - "${VpcPart}${SubnetPart}"
+#          - SubnetPart: '01::/64'
+#            VpcPart: !Select [ 0, !Split [ '00::/56', !Select [ 0, !GetAtt RogVPC.Ipv6CidrBlocks ]]]
+#      Tags:
+#        - Key: Name
+#          Value: sn-db-A
+
+  SubnetAPPA:
+    Type: AWS::EC2::Subnet
+    DependsOn: IPv6Block
+    Properties:
+      VpcId: !Ref RogVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '']
+      CidrBlock: 192.168.16.32/28
+      AssignIpv6AddressOnCreation: true  # Enabling IPv6
+      Ipv6CidrBlock: 
+        Fn::Sub:
+          - "${VpcPart}${SubnetPart}"
+          - SubnetPart: '02::/64'
+            VpcPart: !Select [ 0, !Split [ '00::/56', !Select [ 0, !GetAtt RogVPC.Ipv6CidrBlocks ]]]
+      Tags:
+        - Key: Name
+          Value: sn-app-A
+
+  SubnetWebA:
+    Type: AWS::EC2::Subnet
+    DependsOn: IPv6Block # Wait until IPv6 block is created
+    Properties:
+      VpcId: !Ref RogVPC
+      AvailabilityZone: !Select [ 0, !GetAZs '']
+      CidrBlock: 192.168.16.48/28
+      AssignIpv6AddressOnCreation: true  # Enabling IPv6
+      MapPublicIpOnLaunch: true          # Auto-assign public IPv4
+      Ipv6CidrBlock: 
+        Fn::Sub:
+          - "${VpcPart}${SubnetPart}"
+          - SubnetPart: '03::/64'
+            VpcPart: !Select [ 0, !Split [ '00::/56', !Select [ 0, !GetAtt RogVPC.Ipv6CidrBlocks ]]]
+      Tags:
+        - Key: Name
+          Value: sn-web-A
+
+# IGW Creation
+  RogIGW:                   # Define a new resource named "RogIGW"
+    Type: AWS::EC2::InternetGateway # Resource type
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Rog-igw    # The name that will apper in the console
+
+# IGW Attach
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref RogVPC
+      InternetGatewayId: !Ref RogIGW
+
+# Creating Route Table for Web Subnet
+  RouteTableWeb: 
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref RogVPC
+      Tags:
+      - Key: Name
+        Value: Rog-rt-web
+
+# Subnet Association
+  RouteTableAssociationWebA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetWebA
+      RouteTableId: !Ref RouteTableWeb
+
+# Edit and create a new route (IPv4 and IPv6).
+  RouteTableWebDefaultIPv4: 
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId:
+        Ref: RouteTableWeb
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: RogIGW
+  RouteTableWebDefaultIPv6: 
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId:
+        Ref: RouteTableWeb
+      DestinationIpv6CidrBlock: ::/0
+      GatewayId:
+        Ref: RogIGW
+
+# NAT-Bastion Security Group
+  SGNATBastion:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow SSH, ICMP, HTTP, HTTPS for NAT-Bastion
+      VpcId: !Ref RogVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp
+          FromPort: -1  # Setting to -1 means: “Allow all ICMP types and codes
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  # Security Group for Private Instances.        
+  SGPrivateInstance:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow only intenal traffic
+      VpcId: !Ref RogVPC
+      SecurityGroupIngress:
+        - IpProtocol: -1 # allows any protocol
+          CidrIp: 192.168.16.0/24 # From internal Network
+      # By default, if we don’t define SecurityGroupEgress
+      # AWS will allow all outbound traffic.
+
+# Creating an Elastic IP
+#  EIPNAT:                # Remove the comments to create an Elastic IP
+#    Type: AWS::EC2::EIP
+#    Properties:
+#      Domain: vpc   # Create an Elastic IP for use in a VPC.
+
+# NAT-Bastion EC2 Instance
+  NATBastion:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      SubnetId: !Ref SubnetWebA
+      ImageId: ami-00a929b66ed6e0de6  # Amazon Linux AMI ID (adjust for your region)
+      SecurityGroupIds:
+        - !Ref SGNATBastion
+      KeyName: KeyPair611            # Replace with your actual EC2 Key Pair name
+      SourceDestCheck: false     # Disable source/destination checks
+      UserData:     # Adj the interface name
+      # Fn::Base64: AWS requires EC2 user data to be Base64 encoded
+      # !Sub: Lets you use CloudFormation variables inside the script if needed (e.g., ${SomeRef}).
+      # Automatically runs on first boot of the EC2 instance.
+      # If something in the script fails silently (e.g., yum repo issues), your NAT might not work
+      # but the instance will still show as “running.”
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum install -y iptables-services
+          echo 1 > /proc/sys/net/ipv4/ip_forward
+          iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE 
+          service iptables save
+          sysctl -w net.ipv4.ip_forward=1
+      Tags:
+        - Key: Name
+          Value: NAT-Bastion
+
+# Associating Elastic IP
+#  AssociateEIP:                # Remove the comments to associate an Elastic IP
+#    Type: AWS::EC2::EIPAssociation
+#    Properties:
+#      AllocationId: !GetAtt EIPNAT.AllocationId
+#      InstanceId: !Ref NATBastion
+
+# Crating testing instance in APP subnet.
+  AppInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      SubnetId: !Ref SubnetAPPA
+      ImageId: ami-00a929b66ed6e0de6  # Amazon Linux AMI ID (Adj)
+      SecurityGroupIds:
+        - !Ref SGPrivateInstance
+      KeyName: KeyPair611    # Replace with your EC2 Key Pair name. Don't put the .ppk extension.
+      Tags:
+        - Key: Name
+          Value: App-Test-Instance
+
+Outputs:   # Define an output section to display useful information after the stack is created
+  VPCId:
+    Description: VPC ID   # A description of the output. 
+    Value: !Ref RogVPC        # !Ref returns the logical ID of the resource (RogVPC)
+  #NATPublicIP:   # Remove the comments to show the Elastic IP output
+  #  Description: Elastic IP of NAT-Bastion instance
+  #  Value: !Ref EIPNAT
+  AppInstanceId:
+    Description: Instance ID of the private test instance
+    Value: !Ref AppInstance
+
+# A pertir de aqui seguir con "Disable source/destination checks."
